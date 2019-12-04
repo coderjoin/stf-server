@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+    <title>设备列表</title>
+
+    <link rel="stylesheet" href="/static/vendor/fontawesome-5.7.2/css/all.css">
+    <link rel="stylesheet" href="https://unpkg.com/element-ui/lib/theme-chalk/index.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.2.1/dist/css/bootstrap.min.css">
+
+    <script src="https://cdn.jsdelivr.net/npm/jquery@3.3.1/dist/jquery.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/vue@2.5.21/dist/vue.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/moment@2.23.0/moment.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/element-ui/2.4.11/index.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.2.1/dist/js/bootstrap.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/js-base64@2.5.1/base64.min.js"></script>
+
+    <style>
+        .color-right {
+            background-color: yellowgreen;
+            color: white;
+        }
+
+        .color-wrong {
+            color: red;
+        }
+
+        .color-yellow {
+            color: burlywood;
+        }
+
+        .cursor-pointer {
+            cursor: pointer;
+        }
+    </style>
+</head>
+
+<body>
+<div id="content-wrapper">
+
+    <nav class="navbar sticky-top navbar-expand-lg navbar-dark bg-dark">
+
+        <div class="container-fluid" >
+            <a class="navbar-brand" href="/">
+                <span class="title">ATXServer2</span></a>
+            </a>
+            <div class="collapse navbar-collapse" id="navbarNavDropdown">
+                <div class="navbar-nav">
+                    <a v-for="l in links" :href="l.path" class="nav-item nav-link"
+                       :class="{active: l.path == activePath}">
+                        <i :class="l.icon"></i> {{!l.name}}</a>
+                    </a>
+                    <span class="navbar-text" style="padding-left: 1em">V{{version}}</span>
+                    <!-- <a class="nav-item nav-link active" href='/'> -->
+                    <!-- </a> -->
+                </div>
+                <div class="navbar-nav navbar-right ml-auto">
+                    {% if current_user.admin %}
+                    <div class="nav-item">
+                        <a class="nav-link" href="/admin"><i class="fas fa-users-cog"></i> 后台管理</a>
+                    </div>
+                    {% end %}
+                    <div class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" id="navbarDropdownMenuLink"
+                           data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+                            {{current_user.username}}
+                        </a>
+                        <div class="dropdown-menu" aria-labelledby="navbarDropdownMenuLink">
+                            <a class="dropdown-item" href="/user">用户信息</a>
+                            <a class="dropdown-item" href="/logout">Logout</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarNavDropdown"
+                    aria-controls="navbarNavDropdown" aria-expanded="false" aria-label="Toggle navigation">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+        </div>
+    </nav>
+
+    <script>
+        new Vue({
+            el: "#navbarNavDropdown",
+            data: {
+                links: [{
+                    path: "/devices",
+                    name: "设备列表",
+                    icon: ["fas", "fa-th-list"]
+                    // icon: ["fab", "fa-android"]
+                    // }, {
+                    //     path: "/apples",
+                    //     name: "苹果设备",
+                    //     icon: ["fab", "fa-apple"]
+                }, {
+                    path: "/uploads",
+                    name: "文件上传",
+                    icon: ["fas fa-cloud-upload-alt"]
+                }],
+                activePath: location.pathname,
+            }
+        })
+    </script>
+
+    <div id="app">
+        <div class="container-fluid">
+    <span onclick="location.reload()">
+        <el-alert v-if="websocketDisconnected" title="WebSocket连接断开，点击或F5刷新重连" type="error">
+        </el-alert>
+    </span>
+            <div class="row">
+                <div class="col-12" style="margin-top: 10px">
+                    <div class="card  border-light">
+                        <div class="card-body">
+                            <div>
+                                <!-- <el-checkbox size="mini" v-model="filters.private"><i class="fas fa-lock"></i> 私有设备
+                                </el-checkbox> -->
+                            </div>
+                            <div>
+                                <el-checkbox size="mini" v-model="filters.platform.android">
+                                    <i class="fab fa-android"></i> 安卓 <small>{{!counts.android}}</small>
+                                </el-checkbox>
+                                <el-checkbox size="mini" v-model="filters.platform.apple">
+                                    <i class="fab fa-apple"></i> 苹果 <small>{{!counts.apple}}</small>
+                                </el-checkbox>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <el-table :data="tableData">
+                <!-- <el-table-column prop="udid" label="UDID"></el-table-column> -->
+                <el-table-column label="操作">
+                    <template slot-scope="scope">
+                        <template v-if='"offline" == scope.row.status'>
+                            <el-button size="mini" disabled>设备离线</el-button>
+                        </template>
+                        <template v-else-if='"colding" == scope.row.status'>
+                            <el-button disabled :loading="true" size="mini" type="primary"><span>释放中</span></el-button>
+                        </template>
+                        <template v-else-if='"busy" == scope.row.status'>
+                            <el-button :title="scope.row.userId" style="cursor: not-allowed; background: #f3d19e" size="mini"
+                                       type="warning">
+                        <span @dblclick.alt="deviceRelease(scope.row.udid)">
+                            <i class="fas fa-lock color-yellow" v-show="scope.row.private"></i> 已被占用
+                        </span>
+                            </el-button>
+                        </template>
+                        <template v-else-if='"stop using" == scope.row.status'>
+                            <el-button @click="deviceRelease(scope.row.udid)" size="mini" type="danger">停用</el-button>
+                        </template>
+                        <template v-else>
+                            <a :href='"/devices/"+scope.row.udid+"/remotecontrol"' target="_blank">
+                                <el-button size="mini">
+                                    <span style="color: blue">点击使用</span>
+                                </el-button>
+                            </a>
+                        </template>
+                    </template>
+                </el-table-column>
+                <el-table-column label="设备编号">
+                    <template slot-scope="scope">
+                        <template v-if="scope.row.status == 'stop using'">
+                            <a style="font-family: 'Courier New'" :title="scope.row.prop_serial || scope.row.udid"
+                               :href='"/devices/"+scope.row.udid+"/remotecontrol"'
+                               target="_blank">{{!(scope.row.prop_serial || scope.row.udid) | shortString}}</a>
+                        </template>
+                        <template v-else>
+                    <span style="font-family: 'Courier New'" :title="scope.row.prop_serial || scope.row.udid">
+                        {{!(scope.row.prop_serial || scope.row.udid) | shortString}}
+                    </span>
+                        </template>
+                    </template>
+                </el-table-column>
+                <!-- <el-table-column prop="platform" label="类型"></el-table-column> -->
+                <el-table-column label="设备名" prop="prop_name">
+                    <template slot-scope="scope">
+                        <template v-if="!!scope.row.owner">
+                            <i v-if="scope.row.owner==user.email" class="fas fa-lock color-yellow"></i>
+                            <i v-else class="fas fa-user" :title="scope.row.owner"></i>
+                        </template>
+                        <span v-text="scope.row.prop_name"></span>
+
+                    </template>
+                </el-table-column>
+
+                <el-table-column label="型号">
+                    <template slot-scope="scope">
+                        <span v-text="scope.row.properties.product || scope.row.properties.model"></span>
+                    </template>
+                </el-table-column>
+                <el-table-column prop="prop_brand" sortable label="品牌"></el-table-column>
+
+                <el-table-column :sort-method="tableSortBy('prop_propertyId')" sortable label="资产编号">
+                    <template slot-scope="scope">
+                        <!-- <el-input size="mini"></el-input> -->
+                        <atx-edit-inline :readonly="!user.admin" :value="scope.row.prop_propertyId"
+                                         @change="updatePropertyId(scope.row.udid, $event)">
+                        </atx-edit-inline>
+                        <!-- <span v-text="prop_propertyId"></span> <i class="fas fa-edit cursor-pointer"></i> -->
+                    </template>
+                </el-table-column>
+
+                <el-table-column :sort-method="tableSortBy('department')" sortable label="所属部门">
+                    <template slot-scope="scope">
+                        <!-- <el-input size="mini"></el-input> -->
+                        <atx-edit-inline :readonly="!user.admin" :value="scope.row.department"
+                                         @change="updateDeviceDepartment(scope.row.udid, $event)">
+                        </atx-edit-inline>
+                        <!-- <span v-text="prop_propertyId"></span> <i class="fas fa-edit cursor-pointer"></i> -->
+                    </template>
+                </el-table-column>
+
+                <!-- <el-table-column prop="prop_brand" label="品牌"></el-table-column> -->
+                <el-table-column prop="prop_version" sortable :sort-method="semverCompare" label="Version"></el-table-column>
+                <el-table-column sortable :sort-method="tableSortBy('usingDuration')" label="使用时长">
+                    <template slot-scope="scope">
+                        {{!scope.row.usingDuration | formatDuration}}
+                    </template>
+                </el-table-column>
+            </el-table>
+        </div>
+    </div>
+</div>
+
+<script>
+    // const currentUserEmail = "{{ current_user.email }}";
+    // const currentUserName = "{{ current_user.username }}"
+    // const admin = "{{current_user.admin}}" == "True" // Python true is "True"
+    // console.log(admin)
+</script>
+<script>
+    $.getJSON("/api/v1/devices?present=true")
+        .then((ret) => {
+        new Vue({
+            el: "#app",
+            data: Object.assign({
+                websocketDisconnected: false,
+                user: {
+                    name: currentUserName,
+                    email: currentUserEmail,
+                    admin: admin,
+                },
+                devices: [],
+                counts: {
+                    android: 0,
+                    apple: 0,
+                },
+                filters: {
+                    private: false,
+                    platform: {
+                        apple: false,
+                        android: false,
+                    }
+                }
+            }, { "devices": ret.devices }),
+            computed: {
+                tableData() {
+                    let devices = this.orderedDevices.map(v => {
+                        for (const key in v.properties) {
+                        if (v.properties.hasOwnProperty(key)) {
+                            v['prop_' + key] = v.properties[key]
+                        }
+                    }
+                    let display = v.display || {}
+                    v['display_size'] = display.width + "x" + display.height;
+                    return v;
+                })
+                    const fp = this.filters.platform
+                    if (Object.values(fp).some(b => b)) {
+                        devices = devices.filter(v => fp[v.platform])
+                    }
+                    return devices;
+                },
+                orderedDevices() {
+                    let sortBy = (key) => {
+                        return (a, b) => a[key] > b[key] ? 1 : (b[key] > a[key] ? -1 : 0)
+                    }
+
+                    let devices = this.devices.map(d => {
+                        return Object.assign(d, this.deviceConvert(d))
+                    }).sort(sortBy("order")).reverse()
+
+                    this.counts.android = 0
+                    this.counts.apple = 0
+                    devices.forEach(d => {
+                        if (d.present) {
+                        if (d.platform == "android") {
+                            this.counts.android++
+                        } else if (d.platform == "apple") {
+                            this.counts.apple++
+                        }
+                    }
+                })
+                    return devices;
+
+                    // Only for reference
+                    return [{
+                        udid: "kjnl-dfljsasdklifjdklsfjlasdflsdfk",
+                        platform: "android",
+                        using: false,
+                        present: true, // present is generated by length of sources
+                        ready: false,
+                        colding: false,
+                        private: false,
+                        userId: "anonymous@domain.com",
+                        group: "ntes",
+                        sources: {
+                            "bad1-131jfla-3313131": {
+                                name: "raspberry",
+                                address: "10.0.1.123:7712",
+                                priority: 2,
+                            },
+                            "7718231-sdljf3lkjsf-sfsdf": {
+                                name: "wifi",
+                                address: "10.45.16.71:7912",
+                                priority: 1
+                            }
+                        },
+                        createdAt: "2018-12-1 12:00:01",
+                        lastUsingAt: "2018-12-1 12:00:01",
+                        properties: {
+                            serial: "17fbd6a",
+                            brand: "sumsung",
+                            model: "SM-G9209",
+                            hwaddr: "90:b6:86:7e:7d:ff",
+                            version: "6.0.1",
+                            sdk: 23,
+                            displayHeight: 2560,
+                            displayWidth: 1440,
+                        },
+                    }]
+                }
+            },
+            filters: {
+                formatTime(value) {
+                    var t = moment(value)
+                    return t.format("YYYY-M-D HH:mm:ss");
+                },
+                fromNow(value) {
+                    return moment(value).fromNow();
+                },
+                formatDuration(value) {
+                    let duration = moment.duration(value, "seconds")
+                    return moment.utc(duration.asMilliseconds()).format("HH:mm:ss")
+                },
+                shortString(value) {
+                    if (value.length > 10) {
+                        return value.slice(0, 8) + ".."
+                    }
+                    return value;
+                }
+            },
+            methods: {
+                semverCompare(a, b) {
+                    function cmp(as, bs, i, j) {
+                        let va = as[i], vb = bs[j];
+                        if (va == null || vb == null) {
+                            if (va == null && vb == null) {
+                                return 0
+                            }
+                            return va == null ? -1 : 1;
+                        }
+                        if (va == vb) {
+                            return cmp(as, bs, i + 1, j + 1)
+                        }
+                        return parseInt(va, 10) - parseInt(vb, 10) > 0 ? 1 : -1
+                    }
+
+                    let as = a.prop_version.split("."), bs = b.prop_version.split(".");
+                    return cmp(as, bs, 0, 0)
+                },
+                tableSortBy(prop, defaultValue) {
+                    defaultValue = defaultValue || null;
+                    return (a, b) => {
+                        let va = a[prop] || defaultValue, vb = b[prop] || defaultValue;
+                        if (va == vb) return 0;
+                        return va > vb ? 1 : -1
+                    }
+                },
+                updatePropertyId(udid, text) { // admin required
+                    $.ajax({
+                        url: "/api/v1/devices/" + udid + "/properties",
+                        method: "put",
+                        contentType: "application/json",
+                        data: JSON.stringify({
+                            "propertyId": text,
+                        })
+                    }).fail(ret => {
+                        if (ret.status == 400) {
+                        this.$message.error(ret.responseJSON.description)
+                    } else {
+                        this.$message.error(ret.responseText)
+                    }
+                })
+                },
+                updatePropertyName(udid, text) { // admin required
+                    $.ajax({
+                        url: "/api/v1/devices/" + udid + "/properties",
+                        method: "put",
+                        contentType: "application/json",
+                        data: JSON.stringify({
+                            "name": text,
+                        })
+                    }).fail(ret => {
+                        if (ret.status == 400) {
+                        this.$message.error(ret.responseJSON.description)
+                    } else {
+                        this.$message.error(ret.responseText)
+                    }
+                })
+                },
+                updateDeviceDepartment(udid, text) { // admin required
+                    $.ajax({
+                        url: "/api/v1/devices/" + udid,
+                        method: "put",
+                        contentType: "application/json",
+                        data: JSON.stringify({
+                            "department": text,
+                        })
+                    }).fail(ret => {
+                        if (ret.status == 400) {
+                        this.$message.error(ret.responseJSON.description)
+                    } else {
+                        this.$message.error(ret.responseText)
+                    }
+                })
+                },
+                formatTimeUsed() {
+                    // let duration = moment(this.finishedAt) - moment(this.createdAt);
+                    // return moment.utc(duration).format('HH:mm:ss')
+                },
+                deviceAcquire(udid) { // for multi device acquire
+                    return $.ajax({
+                        method: "post",
+                        url: "/api/v1/user/devices",
+                        data: JSON.stringify({
+                            "udid": udid,
+                        }),
+                        dataType: "json",
+                    })
+                        .done(ret => {
+                        console.log(ret)
+                })
+                },
+                deviceRelease(udid) {
+                    $.ajax({
+                        method: "delete",
+                        url: "/api/v1/user/devices/" + udid,
+                        dataType: "json",
+                    })
+                },
+                deviceConvert(device) {
+                    if (!device.present) {
+                        return { status: "offline", order: 0, text: "设备离线" }
+                    } else if (device.colding) {
+                        return { status: "colding", order: 1, text: "清理中" }
+                    } else if (!device.using) {
+                        return { status: "use", order: 2, text: "开始使用" }
+                    } else if (device.userId == currentUserEmail) {
+                        return { status: "stop using", order: 3, text: "停止使用" }
+                    } else {
+                        return { status: "busy", order: 0.5, text: "忙碌中" }
+                    }
+                },
+                deviceStatusName(device) {
+                    if (!device.present) {
+                        return "Offline"
+                    }
+                    if (device.colding) {
+                        return "Colding"
+                    }
+                    if (!device.using) {
+                        return "Use"
+                    }
+                    if (device.userId == currentUserEmail) {
+                        return "Stop"
+                    }
+                    return "Busy"
+                },
+                clickStatus(event, device) {
+                    let status = this.deviceStatusName(device)
+                    console.log("Status", status)
+                    switch (status) {
+                        case "Use":
+                            return true;
+                        case "Stop":
+                            this.deviceRelease(device.udid);
+                            event.preventDefault()
+                            return true
+                        default:
+                            event.preventDefault()
+                    }
+                    console.log(device.udid)
+                }
+            },
+            components: {
+                "atx-edit-inline": {
+                    props: {
+                        value: String,
+                        readonly: Boolean,
+                    },
+                    data: function () {
+                        return {
+                            edit: false,
+                            editValue: "",
+                        }
+                    },
+                    methods: {
+                        update() {
+                            this.$emit("change", this.editValue);
+                            this.edit = false
+                        },
+                        onEdit() {
+                            this.edit = true
+                            this.editValue = this.value;
+                            this.$nextTick(() => {
+                                this.$refs.input.focus()
+                        })
+                        }
+                    },
+                    template: `
+                        <div>
+                            <form  v-if="edit" class="input-group input-group-sm" @submit.prevent="update">
+                                <input @keyup.esc="edit=false" ref="input" class="form-control" v-model="editValue">
+                                <div class="input-group-append">
+                                    <button type="submit" class="btn btn-outline-secondary">
+                                        <i class="fas fa-save"></i>
+                                    </button>
+                                </div>
+                            </form>
+                            <div v-else>
+                                {{!value}} <i v-if="!readonly" @click="onEdit" class="fas fa-edit cursor-pointer"></i>
+                            </div>
+                        </div>`
+                }
+            },
+            mounted() {
+                let scheme = location.protocol === 'https' ? 'wss' : 'ws';
+                let wsURL = scheme + "://" + location.host + "/websocket/devicechanges";
+                let ws = new WebSocket(wsURL);
+                let refreshKey = null;
+                ws.onopen = (evt) => {
+                    console.log("Websocket Connected")
+                    refreshKey = setInterval(() => {
+                        ws.send("ping")
+                }, 5000)
+                }
+
+                ws.onmessage = (evt) => {
+                    let m = JSON.parse(evt.data);
+                    let isUpdate = this.devices.some((v) => {
+                        return v.udid == m.data.udid;
+                })
+                    if (isUpdate) {
+                        this.devices = this.devices.map((v) => {
+                            console.log(v.udid)
+                        if (v.udid == m.data.udid) {
+                            return m.data
+                        }
+                        return v
+                    })
+                    } else {
+                        this.devices.unshift(m.data);
+                    }
+                }
+                ws.onclose = (evt) => {
+                    console.log("Websocket closed")
+                    this.websocketDisconnected = true
+                    clearInterval(refreshKey)
+                }
+            }
+        })
+    })
+</script>
+</body>
+
+</html>
+
+
